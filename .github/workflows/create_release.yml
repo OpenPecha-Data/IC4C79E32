@@ -1,0 +1,171 @@
+name: create release
+'on':
+  push:
+    paths-ignore: '**/README.md'
+jobs:
+  release-project:
+    name: Release different versions of Text file
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: 'python -m pip install --upgrade pip
+
+        pip install zipfile36 openpecha PyYAML rdflib requests
+
+        '
+    - name: Create zip file for plain and pages
+      run: "import os \nimport re\nimport yaml\nimport requests\nfrom zipfile36 import\
+        \ ZipFile\nfrom os.path import basename\nfrom pathlib import Path\nfrom openpecha.serializers\
+        \ import HFMLSerializer\nfrom rdflib import Graph\nfrom rdflib.namespace import\
+        \ RDF, RDFS, SKOS, OWL, Namespace, NamespaceManager, XSD\nBDR = Namespace(\"\
+        http://purl.bdrc.io/resource/\")\nBDO = Namespace(\"http://purl.bdrc.io/ontology/core/\"\
+        )\ndef write_text(content, new_path, vol_num, volume_title, _type, single,\
+        \ pecha_id):\n    if single != True:\n        if volume_title == None:\n \
+        \           out_fn = Path(f\"{new_path}/v{vol_num}_{_type}.txt\")\n      \
+        \      out_fn.write_text(content)\n        else:\n            out_fn = Path(f\"\
+        {new_path}/v{vol_num}_{volume_title}_{_type}.txt\")\n            out_fn.write_text(content)\n\
+        \    else:\n        if volume_title == None:\n            out_fn = Path(f\"\
+        {new_path}/{pecha_id}_{_type}.txt\")\n            out_fn.write_text(content)\n\
+        \        else:\n            out_fn = Path(f\"{new_path}/{pecha_id}_{volume_title}_{_type}.txt\"\
+        )\n            out_fn.write_text(content)\ndef create_zip(base_path, name):\n\
+        \    with ZipFile(name, 'w') as zipObj:\n        for folderName, subfolders,\
+        \ filenames in os.walk(base_path):\n            for filename in filenames:\n\
+        \                filePath = os.path.join(folderName, filename)\n         \
+        \       zipObj.write(filePath, basename(filePath))\ndef get_imgnum_and_reference(pagination_content):\n\
+        \    new_pagination = {}\n    pagination = {}\n    paginations = pagination_content['annotations']\n\
+        \    for num, uuid in enumerate(paginations,1):\n        if 'imgnum' in paginations[uuid]:\n\
+        \            new_pagination[f\"{num}\"] = { \n                    'imgnum':\
+        \ paginations[uuid]['imgnum'],\n                    'reference': paginations[uuid]['reference']\n\
+        \                    }\n            pagination.update(new_pagination)\n  \
+        \          new_pagination = {}\n    return pagination\ndef get_pagination_info(pagination_path,\
+        \ vol_num):\n    pagination_content = Path(f\"{pagination_path}/{vol_num}/Pagination.yml\"\
+        ).read_text(encoding='utf-8')\n    pagination_content = yaml.safe_load(pagination_content)\n\
+        \    pagination_info = get_imgnum_and_reference(pagination_content)\n    return\
+        \ pagination_info\ndef get_clean_pages(lines, pagination_info):\n    new_line\
+        \ = []\n    new_content = \"\"\n    for num, line in enumerate(lines,1):\n\
+        \        if  num % 2 != 0:\n            new_line = re.sub(f\"(\\[((.\\d+\\\
+        w)|(\\d+(a|b)\\.\\d+)|(\\.\\d+))\\])\", \"\", line )\n            if re.search(r\"\
+        .jpg|.tif\", new_line):\n                new_line = get_new_line(new_line,\
+        \ pagination_info)\n                new_content += new_line\n            \
+        \    new_line = []\n            else:\n                new_content += new_line\n\
+        \                new_line = []\n        else:\n            new_content +=\
+        \ \"\\n\"\n    return new_content\ndef get_new_line(line, pagination_info):\n\
+        \    for pg in pagination_info:\n        imgnum = pagination_info[pg]['imgnum']\n\
+        \        reference = pagination_info[pg]['reference']\n        if re.search(f\"\
+        {reference}\", line):\n            new_line = f\" i-{imgnum}\"\n         \
+        \   break\n    return new_line \ndef change_file_name_pages(pages, pages_path,\
+        \ meta_info, pagination_path, single, pecha_id):\n    _type = \"pages\"\n\
+        \    for num, vol in enumerate(pages,1):\n        vol_num = vol[1:]\n    \
+        \    for info_num, meta in meta_info.items():\n            vol = meta['vol_num']\n\
+        \            new_vol = f\"{vol:03}\"\n            if new_vol == vol_num:\n\
+        \                uid = meta['uid']\n                if 'title' in meta.keys():\n\
+        \                    volume_title = meta['title']\n                else:\n\
+        \                    volume_title = None\n                pagination_info\
+        \ = get_pagination_info(pagination_path, f\"v{vol_num}\")\n              \
+        \  content = pages[f'v{vol_num}']\n                lines = re.split(f\"(\\\
+        \\\\n)\", content)\n                pages_content = get_clean_pages(lines,\
+        \ pagination_info)\n                pages_content += f\"OpenPechaUUID:{uid}\"\
+        \n                write_text(pages_content, pages_path, vol_num, volume_title,\
+        \ _type, single, pecha_id)\ndef get_pages(opf_path):\n    serializer = HFMLSerializer(opf_path,\
+        \ layers=[\"Pagination\"])\n    serializer.apply_layers()\n    results = serializer.get_result()\n\
+        \    return results\ndef change_file_name_plain(meta_info, opf_path, new_path,\
+        \ single, pecha_id):\n    _type = \"plain\"\n    for file in os.listdir(f\"\
+        {opf_path}/base\"):\n        if file.endswith(\".txt\"):\n            file_path\
+        \ = Path(f\"{opf_path}/base/{file}\")\n            file_name = file[1:-4]\n\
+        \            content = Path(f'{file_path}').read_text(encoding='utf-8')\n\
+        \            for info_num, meta in meta_info.items():\n                vol\
+        \ = meta['vol_num']\n                new_vol = f\"{vol:03}\"\n           \
+        \     if new_vol == file_name:\n                    uid = meta['uid']\n  \
+        \                  vol_num = file_name\n                    if 'title' in\
+        \ meta.keys():\n                        volume_title = meta['title']\n   \
+        \                 else:\n                        volume_title = None\n   \
+        \                 content += f\"OpenPechaUUID:{uid}\"\n                  \
+        \  write_text(content, new_path, vol_num, volume_title, _type, single, pecha_id)\
+        \    \n                    break\ndef get_file_name_info(vol_info, meta_info,\
+        \ nums):\n    filename_info = {}\n    for num in nums:\n        for info_num,\
+        \ meta in meta_info.items():\n            if meta['image_group'] == vol_info[num][\"\
+        image_group_id\"]:\n                if vol_info[num][\"title\"]:\n       \
+        \             cur_text[num] = { \n                    'vol_num': meta['vol_num'],\n\
+        \                    'uid': meta['uid'],\n                    'title': vol_info[num][\"\
+        title\"]\n                    }\n                    filename_info.update(cur_text)\n\
+        \                    num += 1\n                    cur_text = {}\n       \
+        \     else:\n                cur_text[num] = { \n                'vol_num':\
+        \ meta['vol_num'],\n                'uid': meta['uid'],\n                }\n\
+        \                filename_info.update(cur_text)\n                num += 1\n\
+        \                cur_text = {}\n        return filename_info\ndef get_img_grp_id(URI):\
+        \    \n    return URI.split(\"/\")[-1]\ndef get_vol_img_grp_id_list(g, work_id):\n\
+        \    vol_img_grp_ids = []\n    volumes = g.objects(BDR[work_id], BDO[\"instanceHasVolume\"\
+        ])\n    for volume in volumes:\n        vol_img_grp_id = get_img_grp_id(str(volume))\n\
+        \        vol_img_grp_ids.append(vol_img_grp_id)\n    vol_img_grp_ids.sort()\n\
+        \    return vol_img_grp_ids\ndef parse_volume_info(meta_ttl, work_id):\n \
+        \   g = Graph()\n    try:\n        g.parse(data=meta_ttl, format=\"ttl\")\n\
+        \    except:\n        print(f\"{work_id}.ttl Contains bad syntax\")\n    \
+        \    return {}\n    vol_img_grp_ids = get_vol_img_grp_id_list(g, work_id)\n\
+        \    vol_info = {}\n    num = 1\n    for vol_img_grp_id in vol_img_grp_ids:\n\
+        \        title = g.value(BDR[vol_img_grp_id], RDFS.comment)\n        if title:\n\
+        \            title = title.value\n            vol_info[num] = {\n        \
+        \        \"image_group_id\": vol_img_grp_id,\n                \"title\": title,\n\
+        \            }\n            num +=1\n    if num == 1:\n        return None,\
+        \ None\n    return vol_info, num\ndef get_ttl(work_id):\n    try:\n      \
+        \  ttl = requests.get(f\"http://purl.bdrc.io/graph/{work_id}.ttl\")\n    \
+        \    return ttl.text\n    except:\n        print(' TTL not Found!!!')\n  \
+        \      return None\ndef check_num_of_vol(meta_info):\n    num = 0\n    for\
+        \ info_num in meta_info:\n        num += 1\n        if num > 1:\n        \
+        \    break\n    return num\ndef get_meta_info(meta_data):\n    work_id = meta_data['source_metadata']['id'][4:]\
+        \ \n    volumes = meta_data['source_metadata']['volumes']\n    cur_text =\
+        \ {}\n    meta_info = {}\n    num = 1\n    for uid, vol_info in volumes.items():\n\
+        \        vol_num = vol_info['volume_number']\n        cur_text[num] = { \n\
+        \            'vol_num': vol_num,\n            'uid': uid[:6]\n        }\n\
+        \        meta_info.update(cur_text)\n        num += 1\n        cur_text =\
+        \ {}\n    return meta_info, work_id\nif __name__==\"__main__\":\n    pecha_id\
+        \ = Path.cwd().name\n    opf_path = Path.cwd().resolve() / f\"{pecha_id}.opf\"\
+        \n    meta_content = Path(f'{opf_path}/meta.yml').read_text(encoding='utf-8')\n\
+        \    meta_data = yaml.safe_load(meta_content)\n    base_path = Path(f'{opf_path}/base')\n\
+        \    plain_path = Path(f\"./output/publication/plains\")\n    plain_path.mkdir(exist_ok=True,\
+        \ parents=True)\n    pages_path = Path(f\"./output/publication/pages\")\n\
+        \    pages_path.mkdir(exist_ok=True, parents=True)\n    meta_info, work_id\
+        \ = get_meta_info(meta_data)\n    nums_of_vol = check_num_of_vol(meta_info)\n\
+        \    meta_ttl = get_ttl(work_id)\n    if meta_ttl != None:\n        vol_info,\
+        \ num  = parse_volume_info(meta_ttl, work_id)\n        if num != None:\n \
+        \           filename_info = get_file_name_info(vol_info, meta_info, num)\n\
+        \            meta_info = filename_info\n    if nums_of_vol == 1:\n       \
+        \ single = True\n    else:\n        single = False\n    change_file_name_plain(meta_info,\
+        \ opf_path, plain_path, single, pecha_id) \n    create_zip(plain_path, f\"\
+        {pecha_id}_plain.zip\") \n    pagination_path = Path(f\"{opf_path}/layers\"\
+        )\n    pages = get_pages(opf_path)\n    change_file_name_pages(pages, pages_path,\
+        \ meta_info, pagination_path, single, pecha_id)\n    create_zip(pages_path,\
+        \ f\"{pecha_id}_pages.zip\")\n"
+      shell: python
+    - name: Create Github Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release ${{ github.run_number }}
+        draft: false
+        prerelease: false
+    - name: upload plain assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{  secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./${{ github.event.repository.name }}_plain.zip
+        asset_name: lho_tsenden_köpa_i_shying_gi_t_plain_P009212.zip
+        asset_content_type: text/zip
+    - name: upload pages assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{  secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./${{ github.event.repository.name }}_pages.zip
+        asset_name: lho_tsenden_köpa_i_shying_gi_t_pages_P009212.zip
+        asset_content_type: text/zip
